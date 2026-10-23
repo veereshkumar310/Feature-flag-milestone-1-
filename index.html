@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature Flag Management System</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 30px;
+            color: #1e293b;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 40px auto;
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px #00000015;
+        }
+
+        h1, h2 {
+            color: #2563eb;
+        }
+
+        input, button {
+            padding: 11px;
+            margin: 6px 0;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            box-sizing: border-box;
+        }
+
+        input {
+            width: 100%;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .flag {
+            padding: 12px;
+            margin: 10px 0;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 7px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #message {
+            color: #dc2626;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container" id="loginPage">
+        <h1>Feature Flag Management</h1>
+        <h2>Welcome!</h2>
+        <p>Login to access the dashboard.</p>
+
+        <form id="loginForm">
+            <input type="text" id="username"
+                   placeholder="Username" required>
+
+            <input type="password" id="password"
+                   placeholder="Password" required>
+
+            <button type="submit">Login</button>
+        </form>
+        <p id="loginMessage"></p>
+
+        <p id="message"></p>
+        <p>Authentication setup is the next step.</p>
+    </div>
+
+    <div class="container hidden" id="dashboard">
+        <h1>Feature Flag Dashboard</h1>
+        <p>Manage your application's feature flags.</p>
+
+        <h2>Create a Feature Flag</h2>
+        <input type="text" id="flagName"
+               placeholder="Enter flag name">
+
+        <button onclick="createFlag()">Create Flag</button>
+
+        <h2>Existing Feature Flags</h2>
+        <button onclick="loadFlags()">Refresh Flags</button>
+        <div id="flagsList"></div>
+
+        <button onclick="logout()">Logout</button>
+    </div>
+
+    <script>
+        const API = "http://127.0.0.1:8000";
+
+        document.getElementById("loginForm").addEventListener("submit", async function(event) {
+    event.preventDefault();
+
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    const message = document.getElementById("loginMessage");
+
+    try {
+        const response = await fetch("/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ username, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            message.textContent = "Login successful!";
+
+            document.getElementById("loginPage").style.display = "none";
+            document.getElementById("dashboard").style.display = "block";
+        } else {
+            message.textContent = data.detail || "Login failed";
+        }
+    } catch (error) {
+        message.textContent = "Error: "+ error.message
+        console.error("Login error:",error);
+    }
+});
+        async function loadFlags() {
+            const list = document.getElementById("flagsList");
+            list.textContent = "Loading...";
+
+            try {
+                const response = await fetch(API + "/flags");
+
+                if (!response.ok) {
+                    throw new Error("Could not load flags");
+                }
+
+                const data = await response.json();
+                list.replaceChildren();
+
+                if (data.flags.length === 0) {
+                    list.textContent = "No feature flags found.";
+                    return;
+                }
+
+                data.flags.forEach(flag => {
+                    const item = document.createElement("div");
+                    item.className = "flag";
+
+                    const name = document.createElement("strong");
+                    name.textContent = flag.flag_name;
+
+                    const status = document.createElement("p");
+                    status.textContent =
+                        "Status: " + (flag.enabled ? "Enabled" : "Disabled");
+
+                    const toggle = document.createElement("button");
+                    toggle.textContent = flag.enabled
+                        ? "Disable" : "Enable";
+
+                    toggle.onclick = () => updateFlag(
+                        flag.flag_name, !flag.enabled
+                    );
+
+                    item.append(name, status, toggle);
+                    list.appendChild(item);
+                });
+            } catch (error) {
+                list.textContent =
+                    "Could not connect. Check whether the API is running.";
+            }
+        }
+
+        async function createFlag() {
+            const name = document.getElementById("flagName")
+                .value.trim();
+
+            if (!name) {
+                alert("Please enter a flag name.");
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    API + "/flags/" + encodeURIComponent(name),
+                    { method: "POST" }
+                );
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.detail || "Could not create flag.");
+                    return;
+                }
+
+                document.getElementById("flagName").value = "";
+                await loadFlags();
+            } catch (error) {
+                alert("Could not connect to the API.");
+            }
+        }
+
+        async function updateFlag(name, enabled) {
+            try {
+                const response = await fetch(
+                    API + "/flags/" + encodeURIComponent(name)
+                    + "?enabled=" + enabled,
+                    { method: "PUT" }
+                );
+
+                if (!response.ok) {
+                    alert("Could not update flag.");
+                    return;
+                }
+
+                await loadFlags();
+            } catch (error) {
+                alert("Could not connect to the API.");
+            }
+        }
+
+        function logout() {
+            document.getElementById("dashboard")
+                .classList.add("hidden");
+            document.getElementById("loginPage")
+                .classList.remove("hidden");
+        }
+    </script>
+
+</body>
+</html>
