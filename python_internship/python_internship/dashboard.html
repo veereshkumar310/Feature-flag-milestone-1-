@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Flag Management System</title>
+<style>
+body{font-family:Arial;background:#f2f4f8;margin:0;padding:20px 12px}
+.container{max-width:900px;margin:20px auto;background:white;padding:24px;border-radius:10px;box-shadow:0 2px 10px #ccc}
+h2{text-align:center;color:#1e3a8a}
+h3{margin-top:28px}
+input,select,textarea,button{width:100%;box-sizing:border-box;padding:11px;margin-top:9px;font-size:15px}
+button{background:#2563eb;color:white;border:0;border-radius:5px;cursor:pointer}
+button:hover{opacity:.88}
+.danger{background:#dc2626}
+.secondary{background:#64748b}
+.item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid #ddd}
+.item-info{flex:1;overflow-wrap:anywhere}
+.actions,.top-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.actions button{width:auto;margin-top:0}
+#message{overflow-wrap:anywhere}
+@media(max-width:600px){.item,.top-buttons{flex-direction:column;align-items:stretch}.actions{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>Feature Flag Management System</h2>
+<h3>Dashboard</h3>
+
+<div class="top-buttons">
+<button id="refreshButton" type="button">Refresh Dashboard</button>
+<button id="logoutButton" class="secondary" type="button">Logout</button>
+</div>
+<p id="message" role="status"></p>
+
+<h3>Create a Feature Flag</h3>
+<form id="flagForm">
+<label for="flagKey">Flag key</label>
+<input id="flagKey" maxlength="100" placeholder="e.g. dark_mode" required>
+
+<label for="flagType">Flag type</label>
+<select id="flagType">
+<option value="boolean">Boolean</option>
+<option value="string">String</option>
+<option value="number">Number</option>
+<option value="json">JSON</option>
+</select>
+
+<label for="defaultValue">Default value (valid JSON)</label>
+<input id="defaultValue" placeholder='e.g. true, 10, or "hello"'>
+
+<label for="flagDescription">Description</label>
+<textarea id="flagDescription" rows="2" placeholder="Flag description"></textarea>
+
+<label for="flagEnvironment">Environment</label>
+<select id="flagEnvironment">
+<option value="">No environment</option>
+</select>
+
+<label><input id="flagEnabled" type="checkbox" checked style="width:auto"> Enabled</label>
+<button type="submit">Create Feature Flag</button>
+</form>
+
+<h3>Your Feature Flags</h3>
+<div id="flagsList">Loading feature flags...</div>
+
+<h3>Create an Environment</h3>
+<form id="environmentForm">
+<input id="environmentName" maxlength="100" placeholder="Environment name" required>
+<textarea id="environmentDescription" rows="2" placeholder="Description (optional)"></textarea>
+<button type="submit">Create Environment</button>
+</form>
+
+<h3>Your Environments</h3>
+<div id="environmentsList">Loading environments...</div>
+</div>
+
+<script>
+const token = localStorage.getItem("access_token");
+const message = document.getElementById("message");
+const flagsList = document.getElementById("flagsList");
+const environmentsList = document.getElementById("environmentsList");
+const environmentSelect = document.getElementById("flagEnvironment");
+let environments = [];
+
+if (!token) {
+    window.location.replace("/");
+}
+
+function showMessage(text) {
+    message.textContent = text;
+}
+
+async function apiRequest(url, options = {}) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            ...options.headers,
+            "Authorization": "Bearer " + token
+        }
+    });
+
+    if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("access_token");
+        window.location.replace("/");
+        throw new Error("Session expired. Please log in again.");
+    }
+    return response;
+}
+
+async function readResponse(response) {
+    const text = await response.text();
+    if (!text) return {};
+    try {
+        return JSON.parse(text);
+    } catch {
+        return {detail: text};
+    }
+}
+
+function showError(error) {
+    showMessage(error.message || "Something went wrong.");
+}
+
+// LOAD ENVIRONMENTS
+async function loadEnvironments() {
+    environmentsList.textContent = "Loading environments...";
+
+    const response = await apiRequest("/api/v1/environments");
+    const data = await readResponse(response);
+
+    if (!response.ok) throw new Error(data.detail || "Could not load environments.");
+    if (!Array.isArray(data)) throw new Error("Unexpected environment response.");
+
+    environments = data;
+
+    const oldValue = environmentSelect.value;
+    environmentSelect.replaceChildren();
+
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "No environment";
+    environmentSelect.appendChild(none);
+
+    environments.forEach(env => {
+        const option = document.createElement("option");
+        option.value = env.id;
+        option.textContent = env.name;
+        environmentSelect.appendChild(option);
+    });
+
+    if ([...environmentSelect.options].some(o => o.value === oldValue)) {
+        environmentSelect.value = oldValue;
+    }
+
+    environmentsList.replaceChildren();
+
+    if (!data.length) {
+        environmentsList.textContent = "No environments created yet.";
+        return;
+    }
+
+    data.forEach(env => {
+        const row = document.createElement("div");
+        row.className = "item";
+
+        const info = document.createElement("div");
+        info.className = "item-info";
+
+        const title = document.createElement("strong");
+        title.textContent = env.name;
+
+        const description = document.createElement("div");
+        description.textContent = env.description || "No description";
+        info.append(title, description);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const view = document.createElement("button");
+        view.textContent = "View Flags";
+        view.onclick = async () => {
+            try {
+                const r = await apiRequest("/api/v1/environments/" + env.id + "/flags");
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not load flags.");
+                if (!Array.isArray(result)) throw new Error("Unexpected flag response.");
+                showMessage("Flags in " + env.name + ": " +
+                    (result.map(f => f.key).join(", ") || "None"));
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        const edit = document.createElement("button");
+        edit.textContent = "Edit";
+        edit.onclick = async () => {
+            const name = prompt("Environment name:", env.name);
+            if (name === null || !name.trim()) return;
+
+            const description = prompt("Description:", env.description || "");
+            if (description === null) return;
+
+            try {
+                const r = await apiRequest("/api/v1/environments/" + env.id, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                        name: name.trim(),
+                        description: description
+                    })
+                });
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not update environment.");
+                showMessage("Environment updated successfully.");
+                await refreshDashboard();
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.className = "danger";
+        del.onclick = async () => {
+            if (!confirm("Delete environment '" + env.name + "'?")) return;
+            try {
+                const r = await apiRequest("/api/v1/environments/" + env.id, {
+                    method: "DELETE"
+                });
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not delete environment.");
+                showMessage("Environment deleted successfully.");
+                await refreshDashboard();
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        actions.append(view, edit, del);
+        row.append(info, actions);
+        environmentsList.appendChild(row);
+    });
+}
+
+// LOAD FLAGS
+async function loadFlags() {
+    flagsList.textContent = "Loading feature flags...";
+
+    const response = await apiRequest("/api/v1/flags");
+    const data = await readResponse(response);
+
+    if (!response.ok) throw new Error(data.detail || "Could not load flags.");
+    if (!Array.isArray(data)) throw new Error("Unexpected flag response.");
+
+    flagsList.replaceChildren();
+
+    if (!data.length) {
+        flagsList.textContent = "No feature flags created yet.";
+        return;
+    }
+
+    data.forEach(flag => {
+        const row = document.createElement("div");
+        row.className = "item";
+
+        const info = document.createElement("div");
+        info.className = "item-info";
+
+        const title = document.createElement("strong");
+        title.textContent = flag.key;
+
+        const details = document.createElement("div");
+        details.textContent =
+            "Type: " + (flag.type || "boolean") +
+            " | Status: " + (flag.enabled ? "Enabled" : "Disabled") +
+            " | Default: " + JSON.stringify(flag.default_value) +
+            " | Environment: " +
+            (environments.find(e => e.id === flag.environment_id)?.name || "None");
+
+        const description = document.createElement("div");
+        description.textContent = flag.description || "No description";
+        info.append(title, details, description);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const toggle = document.createElement("button");
+        toggle.textContent = flag.enabled ? "Disable" : "Enable";
+        toggle.onclick = async () => {
+            try {
+                const r = await apiRequest("/api/v1/flags/" + flag.id, {
+                    method: "PUT",
+                    body: JSON.stringify({enabled: !flag.enabled})
+                });
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not update flag.");
+                showMessage("Flag status updated.");
+                await loadFlags();
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        const edit = document.createElement("button");
+        edit.textContent = "Edit";
+        edit.onclick = async () => {
+            const key = prompt("Flag key:", flag.key);
+            if (key === null || !key.trim()) return;
+
+            const type = prompt("Flag type (boolean/string/number/json):", flag.type || "boolean");
+            if (type === null || !type.trim()) return;
+
+            const defaultText = prompt(
+                'Default value as valid JSON (true, 10, or "hello"):',
+                JSON.stringify(flag.default_value)
+            );
+            if (defaultText === null) return;
+
+            let defaultValue;
+            try {
+                defaultValue = JSON.parse(defaultText);
+            } catch {
+                showMessage("Default value must be valid JSON.");
+                return;
+            }
+
+            const description = prompt("Description:", flag.description || "");
+            if (description === null) return;
+
+            const environmentText = prompt(
+                "Environment ID (blank for none):",
+                flag.environment_id == null ? "" : String(flag.environment_id)
+            );
+            if (environmentText === null) return;
+
+            let environmentId = null;
+            if (environmentText.trim() !== "") {
+                environmentId = Number(environmentText);
+                if (!Number.isInteger(environmentId) ||
+                    !environments.some(e => e.id === environmentId)) {
+                    showMessage("Enter a valid environment ID.");
+                    return;
+                }
+            }
+
+            try {
+                const r = await apiRequest("/api/v1/flags/" + flag.id, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                        key: key.trim(),
+                        type: type.trim(),
+                        default_value: defaultValue,
+                        description: description,
+                        environment_id: environmentId
+                    })
+                });
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not edit flag.");
+                showMessage("Flag updated successfully.");
+                await loadFlags();
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.className = "danger";
+        del.onclick = async () => {
+            if (!confirm("Delete feature flag '" + flag.key + "'?")) return;
+            try {
+                const r = await apiRequest("/api/v1/flags/" + flag.id, {
+                    method: "DELETE"
+                });
+                const result = await readResponse(r);
+                if (!r.ok) throw new Error(result.detail || "Could not delete flag.");
+                showMessage("Feature flag deleted successfully.");
+                await loadFlags();
+            } catch (e) {
+                showError(e);
+            }
+        };
+
+        actions.append(toggle, edit, del);
+        row.append(info, actions);
+        flagsList.appendChild(row);
+    });
+}
+
+// CREATE FLAG
+document.getElementById("flagForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const key = document.getElementById("flagKey").value.trim();
+    const type = document.getElementById("flagType").value;
+    const defaultText = document.getElementById("defaultValue").value.trim();
+    const description = document.getElementById("flagDescription").value.trim();
+    const env = environmentSelect.value;
+    const enabled = document.getElementById("flagEnabled").checked;
+
+    let defaultValue = null;
+    if (defaultText !== "") {
+        try {
+            defaultValue = JSON.parse(defaultText);
+        } catch {
+            showMessage('Default value must be valid JSON, e.g. true, 10, or "hello".');
+            return;
+        }
+    }
+
+    try {
+        const r = await apiRequest("/api/v1/flags", {
+            method: "POST",
+            body: JSON.stringify({
+                key: key,
+                type: type,
+                default_value: defaultValue,
+                enabled: enabled,
+                description: description || null,
+                environment_id: env === "" ? null : Number(env)
+            })
+        });
+        const result = await readResponse(r);
+        if (!r.ok) throw new Error(result.detail || "Could not create flag.");
+
+        event.target.reset();
+        document.getElementById("flagEnabled").checked = true;
+        showMessage("Feature flag created successfully.");
+        await loadFlags();
+    } catch (e) {
+        showError(e);
+    }
+});
+
+// CREATE ENVIRONMENT
+document.getElementById("environmentForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const name = document.getElementById("environmentName").value.trim();
+    const description = document.getElementById("environmentDescription").value.trim();
+
+    try {
+        const r = await apiRequest("/api/v1/environments", {
+            method: "POST",
+            body: JSON.stringify({
+                name: name,
+                description: description || null
+            })
+        });
+        const result = await readResponse(r);
+        if (!r.ok) throw new Error(result.detail || "Could not create environment.");
+
+        event.target.reset();
+        showMessage("Environment created successfully.");
+        await refreshDashboard();
+    } catch (e) {
+        showError(e);
+    }
+});
+
+async function refreshDashboard() {
+    try {
+        await loadEnvironments();
+        await loadFlags();
+    } catch (e) {
+        showError(e);
+    }
+}
+
+document.getElementById("refreshButton").addEventListener("click", refreshDashboard);
+
+document.getElementById("logoutButton").addEventListener("click", () => {
+    localStorage.removeItem("access_token");
+    window.location.replace("/");
+});
+
+if (token) refreshDashboard();
+</script>
+</body>
+</html>

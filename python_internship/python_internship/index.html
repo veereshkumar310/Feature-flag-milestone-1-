@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature Flag Management System</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f4f8;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 400px;
+            margin: 50px auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px #ccc;
+        }
+
+        h2, h3 {
+            text-align: center;
+        }
+
+        input, button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 12px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .register-button {
+            background: #16a34a;
+        }
+
+        #message {
+            text-align: center;
+            margin-top: 15px;
+            overflow-wrap: anywhere;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Feature Flag Management System</h2>
+        <h3>Register / Login</h3>
+
+        <form id="authForm">
+            <input
+                type="email"
+                id="email"
+                placeholder="Enter your email"
+                autocomplete="email"
+                required
+            >
+
+            <input
+                type="text"
+                id="name"
+                placeholder="Enter your full name (for registration)"
+                autocomplete="name"
+            >
+
+            <input
+                type="password"
+                id="password"
+                placeholder="Enter password"
+                autocomplete="current-password"
+                required
+            >
+
+            <button
+                type="button"
+                id="registerButton"
+                class="register-button"
+            >
+                Register
+            </button>
+
+            <button type="submit" id="loginButton">
+                Login
+            </button>
+        </form>
+
+        <p id="message" role="status" aria-live="polite"></p>
+    </div>
+
+    <script>
+        const authForm = document.getElementById("authForm");
+        const nameInput = document.getElementById("name");
+        const emailInput = document.getElementById("email");
+        const passwordInput = document.getElementById("password");
+        const message = document.getElementById("message");
+
+        let requestInProgress = false;
+
+        async function sendRequest(endpoint) {
+            if (requestInProgress) {
+                return;
+            }
+
+            if (
+                endpoint === "/register" &&
+                !nameInput.value.trim()
+            ) {
+                message.textContent =
+                    "Please enter your name before registering.";
+                nameInput.focus();
+                return;
+            }
+
+            requestInProgress = true;
+
+            const buttons = authForm.querySelectorAll("button");
+
+            buttons.forEach(button => {
+                button.disabled = true;
+            });
+
+            message.textContent = "Please wait...";
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        ...(endpoint === "/register" && {
+                            name: nameInput.value.trim()
+                        }),
+                        email: emailInput.value.trim(),
+                        password: passwordInput.value
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    message.textContent =
+                        typeof data.detail === "string"
+                            ? data.detail
+                            : "Request failed. Please check your details.";
+                    return;
+                }
+
+                if (endpoint === "/login") {
+                    if (!data.access_token) {
+                        message.textContent =
+                            "Login response did not contain an access token.";
+                        return;
+                    }
+
+                    localStorage.setItem(
+                        "access_token",
+                        data.access_token
+                    );
+
+                    message.textContent =
+                        "Login successful! Opening dashboard...";
+
+                    window.location.href =
+                        data.redirect || "/dashboard";
+
+                    return;
+                }
+
+                message.textContent =
+                    data.message ||
+                    "Registration successful! You can now log in.";
+
+            } catch (error) {
+                message.textContent =
+                    "Could not connect to the server. Check that FastAPI is running.";
+                console.error("Authentication request failed:", error);
+            } finally {
+                requestInProgress = false;
+
+                buttons.forEach(button => {
+                    button.disabled = false;
+                });
+            }
+        }
+
+        document.getElementById("registerButton").addEventListener(
+            "click",
+            function () {
+                if (!authForm.reportValidity()) {
+                    return;
+                }
+
+                sendRequest("/register");
+            }
+        );
+
+        authForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+
+            if (!authForm.reportValidity()) {
+                return;
+            }
+
+            sendRequest("/login");
+        });
+    </script>
+</body>
+</html>
